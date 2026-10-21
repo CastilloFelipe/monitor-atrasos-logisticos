@@ -3,6 +3,8 @@
 Mini proyecto: **SQL + API REST + Machine Learning + dashboard JS + API externa**
 para detectar envíos con riesgo de atraso en tiempo real.
 
+Proyecto desarrollado en Python (FastAPI, scikit-learn, pandas, SQLite) y JavaScript (Chart.js), utilizando Claude (LLM) como asistente para la optimización de código y estructuración.
+
 ```
 Train.csv ──► cargar_bd.py ──► SQLite (logistica.db) ──► entrenar_modelo.py ──► modelo + curva_umbral.json
                                     ▲                                                   │
