@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitor de Atrasos</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #f4f6f9; --card: #fff; --text: #1d2433; --muted: #6b7385;
+      --borde: #e2e6ee; --acento: #1f5fbf;
+      --alto: #d64545; --medio: #e0a020; --bajo: #2e9e6a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: var(--acento); color: #fff; padding: 16px 24px; }
+    header h1 { margin: 0; font-size: 20px; }
+    header p { margin: 4px 0 0; opacity: .85; font-size: 14px; }
+    main { padding: 20px 16px; display: grid; gap: 16px; max-width: 1200px; margin: auto; }
+    .fila { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .ancha { grid-column: 1 / -1; }
+    .card { background: var(--card); border: 1px solid var(--borde); border-radius: 10px; padding: 16px; min-width: 0; }
+    .card h2 { margin: 0 0 12px; font-size: 15px; color: var(--muted); font-weight: 600; }
+    .kpi { font-size: 32px; font-weight: 700; }
+    .kpi small { font-size: 14px; color: var(--muted); font-weight: 400; }
+    .sub { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+    label { font-size: 12px; color: var(--muted); display: grid; gap: 3px; }
+    input, select, button { font: inherit; padding: 6px 8px; border: 1px solid var(--borde); border-radius: 6px; }
+    button { background: var(--acento); color: #fff; border: 0; cursor: pointer; padding: 9px; }
+    form button { grid-column: span 2; }
+    button.sec { background: #fff; color: var(--acento); border: 1px solid var(--acento); padding: 6px 10px; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #resultado { margin-top: 12px; font-size: 15px; }
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
+    .alto { background: var(--alto); } .medio { background: var(--medio); } .bajo { background: var(--bajo); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--borde); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
+    .barra { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .barra .sep { flex: 1; }
+    .reloj { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .tabla-wrap { overflow: auto; max-height: 420px; }
+    tr.nuevo { animation: flash 1.5s; }
+    @keyframes flash { from { background: #fff4c2; } to { background: transparent; } }
+    .vivo { width: 9px; height: 9px; border-radius: 50%; background: var(--bajo); display: inline-block; animation: pulso 1.2s infinite; }
+    @keyframes pulso { 50% { opacity: .3; } }
+    input[type=range] { width: 100%; padding: 0; }
+    .metricas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; text-align: center; }
+    .metricas b { display: block; font-size: 22px; }
+    .metricas span { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Monitor de Atrasos Logísticos</h1>
+  <p>KPIs históricos (SQL) · Predicción con Machine Learning · Alertas en tiempo real · Clima (API externa)</p>
+</header>
+
+<main>
+  <!-- [Paso 5.1] KPIs + [Paso 8.1] clima -->
+  <div class="fila">
+    <div class="card"><h2>Envíos históricos</h2><div class="kpi" id="kpi-total">–</div></div>
+    <div class="card"><h2>% atrasados (histórico)</h2><div class="kpi" id="kpi-atraso">–</div></div>
+    <div class="card"><h2>Envíos en curso</h2><div class="kpi" id="kpi-curso">–</div>
+      <div class="sub">Reloj de la simulación: <span class="reloj" id="reloj">–</span></div></div>
+    <div class="card"><h2>Clima Planta Quilicura (Open-Meteo)</h2>
+      <div class="kpi" id="clima-temp">–</div><div class="sub" id="clima-desc"></div></div>
+  </div>
+
+  <!-- [Paso 5.2] Gráficos -->
+  <div class="fila">
+    <div class="card"><h2>% atraso por bodega</h2><canvas id="graf-bodega"></canvas></div>
+    <div class="card"><h2>% atraso por modo de envío</h2><canvas id="graf-modo"></canvas></div>
+  </div>
+
+  <div class="fila">
+    <!-- [Paso 5.3] Predicción manual -->
+    <div class="card">
+      <h2>Simular un envío (POST /predict)</h2>
+      <form id="form-pred">
+        <label>Bodega <select name="bodega"><option>A</option><option>B</option><option>C</option><option>D</option><option selected>F</option></select></label>
+        <label>Modo <select name="modo_envio"><option>Ship</option><option>Flight</option><option>Road</option></select></label>
+        <label>Llamadas cliente <input name="llamadas_cliente" type="number" value="4" min="0"></label>
+        <label>Rating cliente <input name="rating_cliente" type="number" value="3" min="1" max="5"></label>
+        <label>Costo producto <input name="costo_producto" type="number" value="210" min="1"></label>
+        <label>Compras previas <input name="compras_previas" type="number" value="3" min="0"></label>
+        <label>Importancia <select name="importancia"><option>low</option><option>medium</option><option>high</option></select></label>
+        <label>Descuento (%) <input name="descuento" type="number" value="5" min="0"></label>
+        <label>Peso (gr) <input name="peso_gr" type="number" value="4500" min="1"></label>
+        <span></span>
+        <button type="submit">Predecir atraso</button>
+      </form>
+      <div id="resultado"></div>
+    </div>
+
+    <!-- [Paso 8.2] Umbral ajustable -->
+    <div class="card">
+      <h2>Umbral de alerta (PUT /umbral)</h2>
+      <label>Alertar como "alto" si la probabilidad es ≥ <b id="umbral-valor">–</b>
+        <input type="range" id="umbral" min="0.30" max="0.95" step="0.01">
+      </label>
+      <div class="metricas">
+        <div><b id="m-precision">–</b><span>Precisión</span></div>
+        <div><b id="m-recall">–</b><span>Recall</span></div>
+        <div><b id="m-alertas">–</b><span>% envíos alertados</span></div>
+      </div>
+      <canvas id="graf-umbral" height="170"></canvas>
+      <div class="sub">Medido en el 20 % de test. Umbral bajo = detecta más atrasos pero con más falsas alarmas.</div>
+    </div>
+  </div>
+
+  <!-- [Paso 5.4] Monitor en vivo + [Paso 8.3] lapso de tiempo -->
+  <div class="card">
+    <h2><span class="vivo"></span> Alertas en tiempo real (GET /alertas)</h2>
+    <div class="barra">
+      <span class="badge alto" id="c-alto">alto: 0</span>
+      <span class="badge medio" id="c-medio">medio: 0</span>
+      <span class="badge bajo" id="c-bajo">bajo: 0</span>
+      <select id="filtro-nivel">
+        <option value="todos">Todos</option>
+        <option value="alto">Solo alto</option>
+        <option value="medio">Solo medio</option>
+        <option value="bajo">Solo bajo</option>
+      </select>
+      <span class="sep"></span>
+      <span class="sub">Simular lapso:</span>
+      <button class="sec lapso" data-horas="1">+1 hora</button>
+      <button class="sec lapso" data-horas="8">+8 horas</button>
+      <button class="sec lapso" data-horas="24">+1 día</button>
+      <button class="sec" id="btn-limpiar">Reiniciar</button>
+    </div>
+    <div class="sub" id="lapso-msg"></div>
+    <div class="tabla-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Llegada</th><th>Bodega</th><th>Modo</th><th>Prob.</th><th>Nivel</th><th>Clima</th><th>Motivos</th></tr></thead>
+        <tbody id="tabla-alertas"><tr><td colspan="8">Usa los botones de lapso o ejecuta <code>python simulador.py</code>…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+const API = "";  // misma URL que sirve el dashboard
+
+// Formato corto de fecha: "20-10 19:45"
+const corta = iso => `${iso.slice(8, 10)}-${iso.slice(5, 7)} ${iso.slice(11, 16)}`;
+const pct = x => (x * 100).toFixed(0) + "%";
+
+// ---------- [Paso 5.1 / 5.2] KPIs y gráficos ----------
+function grafico(id, datos) {
+  new Chart(document.getElementById(id), {
+    type: "bar",
+    data: {
+      labels: datos.map(d => d.grupo),
+      datasets: [{ data: datos.map(d => d.pct_atraso), backgroundColor: "#1f5fbf" }],
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, max: 100, ticks: { callback: v => v + "%" } } },
+    },
+  });
+}
+
+async function cargarKpis() {
+  const k = await fetch(API + "/kpis").then(r => r.json());
+  document.getElementById("kpi-total").textContent = k.total.toLocaleString("es-CL");
+  document.getElementById("kpi-atraso").textContent = k.pct_atraso + "%";
+  grafico("graf-bodega", k.por_bodega);
+  grafico("graf-modo", k.por_modo);
+}
+
+// ---------- [Paso 8.1] Clima (la API llama a Open-Meteo) ----------
+async function cargarClima() {
+  const c = await fetch(API + "/clima").then(r => r.json());
+  if (!c.disponible) {
+    document.getElementById("clima-desc").textContent = "Servicio de clima no disponible";
+    return;
+  }
+  document.getElementById("clima-temp").innerHTML = `${c.temperatura}°C <small>${c.descripcion}</small>`;
+  document.getElementById("clima-desc").textContent =
+    `Lluvia ${c.lluvia_mm} mm · Viento ${c.viento_kmh} km/h · ${corta(c.hora)}`;
+}
+
+// ---------- [Paso 5.3] Predicción manual ----------
+document.getElementById("form-pred").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const datos = Object.fromEntries(new FormData(e.target));
+  for (const campo of ["llamadas_cliente", "rating_cliente", "costo_producto",
+                       "compras_previas", "descuento", "peso_gr"]) {
+    datos[campo] = Number(datos[campo]);
+  }
+  const r = await fetch(API + "/predict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(datos),
+  }).then(r => r.json());
+
+  document.getElementById("resultado").innerHTML = r.nivel
+    ? `Probabilidad de atraso: <b>${(r.prob_atraso * 100).toFixed(1)}%</b>
+       <span class="badge ${r.nivel}">${r.nivel}</span>
+       <br><small>${r.motivos.join(" · ") || "Sin factores de riesgo destacados"}</small>`
+    : `<span style="color:var(--alto)">Error: ${JSON.stringify(r.detail)}</span>`;
+});
+
+// ---------- [Paso 8.2] Umbral ajustable ----------
+let curva = [], grafUmbral;
+const slider = document.getElementById("umbral");
+
+function mostrarUmbral(u) {
+  const p = curva.reduce((a, b) => Math.abs(b.umbral - u) < Math.abs(a.umbral - u) ? b : a);
+  document.getElementById("umbral-valor").textContent = u.toFixed(2);
+  document.getElementById("m-precision").textContent = pct(p.precision);
+  document.getElementById("m-recall").textContent = pct(p.recall);
+  document.getElementById("m-alertas").textContent = pct(p.pct_alertas);
+  // Línea vertical en el gráfico donde está el umbral
+  grafUmbral.data.datasets[2].data = [{ x: u, y: 0 }, { x: u, y: 1 }];
+  grafUmbral.update("none");
+}
+
+async function cargarUmbral() {
+  const r = await fetch(API + "/umbral").then(r => r.json());
+  curva = r.curva;
+  grafUmbral = new Chart(document.getElementById("graf-umbral"), {
+    type: "line",
+    data: {
+      datasets: [
+        { label: "Precisión", data: curva.map(p => ({ x: p.umbral, y: p.precision })),
+          borderColor: "#1f5fbf", pointRadius: 0, borderWidth: 2 },
+        { label: "Recall", data: curva.map(p => ({ x: p.umbral, y: p.recall })),
+          borderColor: "#d64545", pointRadius: 0, borderWidth: 2 },
+        { label: "Umbral", data: [], borderColor: "#6b7385", borderDash: [4, 4],
+          pointRadius: 0, borderWidth: 1 },
+      ],
+    },
+    options: {
+      animation: false,
+      scales: {
+        x: { type: "linear", min: 0.3, max: 0.95, title: { display: true, text: "Umbral" } },
+        y: { min: 0, max: 1, ticks: { callback: v => (v * 100) + "%" } },
+      },
+      plugins: { legend: { labels: { filter: l => l.text !== "Umbral", boxHeight: 2 } } },
+    },
+  });
+  slider.value = r.umbral;
+  mostrarUmbral(r.umbral);
+}
+
+slider.addEventListener("input", () => mostrarUmbral(Number(slider.value)));
+slider.addEventListener("change", async () => {
+  await fetch(API + "/umbral", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ umbral: Number(slider.value) }),
+  });
+  cargarAlertas();  // los niveles se recalculan en SQL con el nuevo umbral
+});
+
+// ---------- [Paso 5.4] Monitor en tiempo real (polling cada 2 s) ----------
+let ultimoId = 0;
+
+async function cargarAlertas() {
+  const nivel = document.getElementById("filtro-nivel").value;
+  const a = await fetch(`${API}/alertas?nivel=${nivel}&limite=100`).then(r => r.json());
+
+  const r = a.resumen;
+  document.getElementById("c-alto").textContent = "alto: " + (r.alto || 0);
+  document.getElementById("c-medio").textContent = "medio: " + (r.medio || 0);
+  document.getElementById("c-bajo").textContent = "bajo: " + (r.bajo || 0);
+  document.getElementById("kpi-curso").textContent =
+    (r.alto || 0) + (r.medio || 0) + (r.bajo || 0);
+  document.getElementById("reloj").textContent = corta(a.reloj);
+
+  if (a.envios.length === 0) return;
+  const maxPrevio = ultimoId;
+  document.getElementById("tabla-alertas").innerHTML = a.envios.map(e => `
+    <tr class="${e.id > maxPrevio && maxPrevio > 0 ? "nuevo" : ""}">
+      <td>${e.id}</td>
+      <td>${corta(e.recibido_en)}</td>
+      <td>${e.bodega}</td>
+      <td>${e.modo_envio}</td>
+      <td>${pct(e.prob_atraso)}</td>
+      <td><span class="badge ${e.nivel}">${e.nivel}</span></td>
+      <td>${e.temperatura == null ? "–" : `${e.temperatura}°C${e.lluvia_mm > 0 ? " · " + e.lluvia_mm + " mm" : ""}`}</td>
+      <td>${e.motivos || "–"}</td>
+    </tr>`).join("");
+  ultimoId = Math.max(ultimoId, a.envios[0].id);
+}
+
+// ---------- [Paso 8.3] Simular un lapso de tiempo ----------
+document.querySelectorAll(".lapso").forEach(btn => btn.addEventListener("click", async () => {
+  const botones = document.querySelectorAll(".lapso");
+  botones.forEach(b => b.disabled = true);
+  const r = await fetch(`${API}/simular?horas=${btn.dataset.horas}`, { method: "POST" })
+    .then(r => r.json());
+  botones.forEach(b => b.disabled = false);
+  document.getElementById("lapso-msg").textContent =
+    `Simuladas ${btn.dataset.horas} h (${corta(r.desde)} → ${corta(r.hasta)}): ` +
+    `${r.generados} envíos · ${r.alto} alto · ${r.medio} medio · ${r.bajo} bajo`;
+  cargarAlertas();
+}));
+
+document.getElementById("filtro-nivel").addEventListener("change", cargarAlertas);
+document.getElementById("btn-limpiar").addEventListener("click", async () => {
+  await fetch(API + "/envios", { method: "DELETE" });
+  ultimoId = 0;
+  document.getElementById("lapso-msg").textContent = "";
+  document.getElementById("tabla-alertas").innerHTML =
+    '<tr><td colspan="8">Sin envíos en curso.</td></tr>';
+  cargarAlertas();
+});
+
+cargarKpis();
+cargarClima();
+cargarUmbral();
+cargarAlertas();
+setInterval(cargarAlertas, 2000);
+setInterval(cargarClima, 10 * 60 * 1000);
+</script>
+</body>
+</html>

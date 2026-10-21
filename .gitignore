@@ -1,0 +1,12 @@
+# Archivos generados (se recrean con cargar_bd.py y entrenar_modelo.py)
+logistica.db
+modelo_atrasos.joblib
+curva_umbral.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Configuración local del editor
+.claude/
