@@ -1,6 +1,8 @@
 # Monitor de Atrasos Logísticos
 
-Mini proyecto: **SQL + API REST + Machine Learning + dashboard JS + API externa**
+[![Tests](https://github.com/CastilloFelipe/monitor-atrasos-logisticos/actions/workflows/tests.yml/badge.svg)](https://github.com/CastilloFelipe/monitor-atrasos-logisticos/actions/workflows/tests.yml)
+
+Mini proyecto: **SQL + API REST + Machine Learning explicable (SHAP) + dashboard JS + API externa**
 para detectar envíos con riesgo de atraso en tiempo real.
 
 Proyecto desarrollado en Python (FastAPI, scikit-learn, pandas, SQLite) y JavaScript (Chart.js), utilizando Claude (LLM) como asistente para la optimización de código y estructuración.
@@ -28,6 +30,13 @@ uvicorn api:app --reload     # Paso 4: levanta la API -> http://127.0.0.1:8000
 python simulador.py          # Paso 6: (otra terminal, opcional) envíos en vivo
 ```
 
+Tests (requieren haber corrido los pasos 1 y 3):
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 Si el puerto 8000 está ocupado: `uvicorn api:app --port 8001` y `python simulador.py 8001`.
 
 Documentación interactiva de la API: http://127.0.0.1:8000/docs
@@ -48,13 +57,17 @@ las mismas marcas en comentarios, para seguirlo junto al manual.
 | 8.1 | `clima.py` | Consumo de API externa (Open-Meteo) |
 | 8.2 | `api.py` + dashboard | Umbral de alerta ajustable |
 | 8.3 | `api.py` + dashboard | Botones para simular un lapso de tiempo |
+| 8.4 | `api.py` + dashboard | Motivos de cada alerta explicados con SHAP |
+| 8.5 | `tests/test_api.py` | 12 tests automáticos de la API (pytest) |
+| 8.6 | `.github/workflows/tests.yml` | GitHub Actions corre los tests en cada push |
+| 8.7 | `render.yaml` | Despliegue en Render (plan gratuito) |
 
 ## Endpoints
 
 | Método | Ruta | Qué hace |
 |---|---|---|
 | GET | `/kpis` | % de atraso total, por bodega, modo e importancia |
-| POST | `/predict` | Probabilidad, nivel (alto/medio/bajo) y motivos de un envío |
+| POST | `/predict` | Probabilidad, nivel (alto/medio/bajo), motivos y aporte SHAP de cada variable |
 | POST | `/envios` | Igual que `/predict`, pero lo guarda con el clima de su hora |
 | GET | `/alertas?nivel=alto&limite=20` | Envíos en curso; el nivel se calcula en SQL con el umbral vigente |
 | DELETE | `/envios` | Reinicia la demo |
@@ -69,7 +82,7 @@ Dataset público ["E-Commerce Shipping Data" (Kaggle)](https://www.kaggle.com/da
 por eso se renombró a `atrasado`.
 
 Hallazgos (`analisis_sql.py`):
-- Descuento > 10 % → **100 %** atrasados (2.647 envíos).
+- Descuento > 10 → **100 %** atrasados (2.647 envíos). El dataset no indica si el descuento es porcentaje o monto.
 - Peso entre 2 y 4 kg → **99,9 %** atrasados.
 - Bodega y modo de envío casi no cambian la tasa (~58-60 %).
 - Paradoja: los productos de importancia **alta** se atrasan más (65 % vs ~59 %).
@@ -98,9 +111,29 @@ no detectado vs. una falsa alarma.
 
 Niveles: **alto** ≥ umbral · **medio** hasta 10 puntos bajo el umbral · **bajo** el resto.
 
+### Explicaciones con SHAP
+
+Cada predicción se descompone con `shap.TreeExplainer`:
+
+```
+probabilidad de atraso = promedio (59,7 %) + suma de los aportes de cada variable
+```
+
+Los **motivos** de una alerta son las hasta 3 variables que más suben el riesgo
+(al menos 2 puntos), por ejemplo `Peso 2.5 kg (+20 pts) · Descuento 25 (+17 pts)`.
+Antes eran reglas fijas sacadas del análisis SQL; ahora salen del propio modelo.
+El dashboard muestra el aporte de las 9 variables como barras (rojo sube, verde baja).
+
+## Despliegue en Render
+
+`render.yaml` define el servicio: instala dependencias, genera la base y el modelo
+durante el build y levanta `uvicorn`. Para publicarlo: en Render, *New → Blueprint*
+y elegir este repositorio. En el plan gratuito el servicio se duerme tras 15 min sin
+visitas (la primera carga tarda cerca de 1 min) y los envíos en curso se pierden en
+cada despliegue.
+
 ## Próximos pasos (para conversar)
 
-- Usar valores SHAP para que los motivos salgan del modelo y no de reglas fijas.
 - Reemplazar el polling cada 2 s por WebSockets.
 - Conectar fuentes reales (GPS, TMS, WMS) en vez del simulador.
 - Entrenar con el clima guardado en cada envío cuando haya resultados reales.

@@ -38,7 +38,7 @@ CONSULTAS = {
         FROM envios GROUP BY importancia
     """,
     # [Paso 2.5] Descuento: el patrón más fuerte
-    "2.5 Descuento > 10%": """
+    "2.5 Descuento > 10": """
         SELECT descuento > 10 AS descuento_alto, COUNT(*) AS envios,
                ROUND(AVG(atrasado) * 100, 1) AS pct_atraso
         FROM envios GROUP BY descuento_alto

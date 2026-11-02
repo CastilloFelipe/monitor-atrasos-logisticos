@@ -32,6 +32,12 @@
     button.sec { background: #fff; color: var(--acento); border: 1px solid var(--acento); padding: 6px 10px; }
     button:disabled { opacity: .5; cursor: wait; }
     #resultado { margin-top: 12px; font-size: 15px; }
+    .shap { display: grid; grid-template-columns: 9.5em 1fr 4em; gap: 3px 8px; align-items: center; font-size: 12px; margin-top: 8px; }
+    .shap .eje { position: relative; height: 12px; border-left: 1px solid var(--borde); }
+    .shap .eje div { position: absolute; top: 0; height: 12px; border-radius: 2px; }
+    .shap .sube { background: var(--alto); left: 50%; }
+    .shap .baja { background: var(--bajo); right: 50%; }
+    .shap .num { text-align: right; font-variant-numeric: tabular-nums; }
     .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
     .alto { background: var(--alto); } .medio { background: var(--medio); } .bajo { background: var(--bajo); }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -86,7 +92,7 @@
         <label>Costo producto <input name="costo_producto" type="number" value="210" min="1"></label>
         <label>Compras previas <input name="compras_previas" type="number" value="3" min="0"></label>
         <label>Importancia <select name="importancia"><option>low</option><option>medium</option><option>high</option></select></label>
-        <label>Descuento (%) <input name="descuento" type="number" value="5" min="0"></label>
+        <label>Descuento <input name="descuento" type="number" value="5" min="0"></label>
         <label>Peso (gr) <input name="peso_gr" type="number" value="4500" min="1"></label>
         <span></span>
         <button type="submit">Predecir atraso</button>
@@ -199,9 +205,24 @@ document.getElementById("form-pred").addEventListener("submit", async (e) => {
   document.getElementById("resultado").innerHTML = r.nivel
     ? `Probabilidad de atraso: <b>${(r.prob_atraso * 100).toFixed(1)}%</b>
        <span class="badge ${r.nivel}">${r.nivel}</span>
-       <br><small>${r.motivos.join(" · ") || "Sin factores de riesgo destacados"}</small>`
+       <br><small>${r.motivos.join(" · ") || "Sin factores de riesgo destacados"}</small>
+       ${barrasShap(r)}`
     : `<span style="color:var(--alto)">Error: ${JSON.stringify(r.detail)}</span>`;
 });
+
+// [Paso 8.4] Aporte de cada variable (SHAP): rojo sube el riesgo, verde lo baja
+function barrasShap(r) {
+  const max = Math.max(...r.explicacion.map(e => Math.abs(e.aporte)), 0.01);
+  const filas = r.explicacion.map(e => {
+    const ancho = (Math.abs(e.aporte) / max * 50).toFixed(1);
+    const pts = (e.aporte * 100).toFixed(0);
+    return `<span>${e.nombre} = ${e.valor}</span>
+      <span class="eje"><div class="${e.aporte >= 0 ? "sube" : "baja"}" style="width:${ancho}%"></div></span>
+      <span class="num">${e.aporte >= 0 ? "+" : ""}${pts} pts</span>`;
+  }).join("");
+  return `<div class="sub" style="margin-top:10px">Promedio ${(r.base * 100).toFixed(0)}%
+    + aportes = ${(r.prob_atraso * 100).toFixed(0)}%</div><div class="shap">${filas}</div>`;
+}
 
 // ---------- [Paso 8.2] Umbral ajustable ----------
 let curva = [], grafUmbral;

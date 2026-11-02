@@ -1,0 +1,14 @@
+# PASO 8.7: despliegue en Render (plan gratuito).
+# La base y el modelo se generan durante el build, igual que en local.
+# Nota: en el plan gratuito el disco se reinicia en cada despliegue y el
+# servicio se duerme tras 15 min sin visitas (la primera carga tarda ~1 min).
+services:
+  - type: web
+    name: monitor-atrasos-logisticos
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python cargar_bd.py && python entrenar_modelo.py
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10

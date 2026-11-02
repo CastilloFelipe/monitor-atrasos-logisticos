@@ -3,7 +3,7 @@ PASO 4: API REST con FastAPI (+ mejoras del PASO 8).
 
 Endpoints:
   GET  /kpis      -> indicadores históricos calculados con SQL
-  POST /predict   -> probabilidad de atraso de un envío (no se guarda)
+  POST /predict   -> probabilidad de atraso + explicación SHAP (no se guarda) [Paso 8.4]
   POST /envios    -> registra un envío "en curso", lo clasifica y lo guarda
   GET  /alertas   -> envíos en curso, con su nivel según el umbral actual
   DELETE /envios  -> reinicia la demo
@@ -17,13 +17,16 @@ Ejecutar:  uvicorn api:app --reload
 Docs automáticas: http://127.0.0.1:8000/docs
 """
 import json
+import os
 import random
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Literal
 
 import joblib
+import numpy as np
 import pandas as pd
+import shap
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,16 +34,40 @@ from pydantic import BaseModel, Field
 
 from clima import clima_actual, clima_en
 
-BD = "logistica.db"
+BD = os.environ.get("LOGISTICA_BD", "logistica.db")  # los tests usan una copia
 COLUMNAS_MODELO = ["bodega", "modo_envio", "llamadas_cliente", "rating_cliente",
                    "costo_producto", "compras_previas", "importancia",
                    "descuento", "peso_gr"]
 BANDA_MEDIO = 0.10  # "medio" = hasta 10 puntos bajo el umbral
+APORTE_MINIMO = 0.02  # un motivo debe subir el riesgo al menos 2 puntos
 
 # --- [Paso 4.1] Cargar el modelo y la curva una sola vez al arrancar ----------
 modelo = joblib.load("modelo_atrasos.joblib")
 with open("curva_umbral.json") as f:
     CURVA = json.load(f)
+
+# --- [Paso 8.4] Explicador SHAP sobre el Random Forest ------------------------
+# SHAP reparte la probabilidad de cada envío entre sus variables:
+#   prob_atraso = BASE + suma de los aportes de cada variable
+explicador = shap.TreeExplainer(modelo.named_steps["rf"])
+BASE = float(np.ravel(explicador.expected_value)[-1])  # tasa media de atraso
+
+# El one-hot convierte "bodega" en bodega_A, bodega_B... Para explicar, cada
+# columna transformada se vuelve a asignar a la variable original.
+VARIABLE_DE = []
+for nombre in modelo.named_steps["prep"].get_feature_names_out():
+    grupo, columna = nombre.split("__", 1)
+    if grupo == "cat":
+        columna = next(c for c in ["bodega", "modo_envio", "importancia"]
+                       if columna.startswith(c + "_"))
+    VARIABLE_DE.append(columna)
+
+NOMBRE_VARIABLE = {
+    "bodega": "Bodega", "modo_envio": "Modo", "importancia": "Importancia",
+    "llamadas_cliente": "Llamadas", "rating_cliente": "Rating",
+    "costo_producto": "Costo", "compras_previas": "Compras previas",
+    "descuento": "Descuento", "peso_gr": "Peso",
+}
 
 app = FastAPI(title="Monitor de atrasos logísticos")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -114,20 +141,48 @@ def nivel_de(prob: float, umbral: float) -> str:
     return "bajo"
 
 
-def motivos_de(envio: dict) -> list:
-    """Motivos legibles para el operador, basados en el análisis SQL (Paso 2)."""
-    motivos = []
-    if envio["descuento"] > 10:
-        motivos.append("Descuento > 10%")
-    if 2000 <= envio["peso_gr"] < 4000:
-        motivos.append("Peso entre 2 y 4 kg")
-    return motivos
+def predecir(envios: list) -> tuple:
+    """[Paso 8.4.1] Probabilidad de atraso y explicación SHAP de cada envío.
 
-
-def predecir(envios: list) -> list:
-    """Probabilidad de atraso para una lista de envíos (una sola llamada al modelo)."""
+    Una sola llamada al modelo y a SHAP para toda la lista.
+    """
     X = pd.DataFrame(envios)[COLUMNAS_MODELO]
-    return [round(float(p), 3) for p in modelo.predict_proba(X)[:, 1]]
+    probs = [round(float(p), 3) for p in modelo.predict_proba(X)[:, 1]]
+
+    valores = explicador.shap_values(modelo.named_steps["prep"].transform(X))
+    if isinstance(valores, list):  # versiones antiguas de shap: una lista por clase
+        valores = valores[1]
+    elif np.ndim(valores) == 3:    # versiones nuevas: (filas, columnas, clases)
+        valores = valores[:, :, 1]
+
+    explicaciones = []
+    for envio, fila in zip(envios, valores):
+        aportes = dict.fromkeys(COLUMNAS_MODELO, 0.0)
+        for variable, aporte in zip(VARIABLE_DE, fila):
+            aportes[variable] += float(aporte)
+        explicaciones.append(sorted(
+            ({"variable": v, "nombre": NOMBRE_VARIABLE[v], "valor": envio[v],
+              "aporte": round(a, 3)}
+             for v, a in aportes.items()),
+            key=lambda e: abs(e["aporte"]), reverse=True,
+        ))
+    return probs, explicaciones
+
+
+def motivos_de(explicacion: list) -> list:
+    """[Paso 8.4.2] Hasta 3 variables que más suben el riesgo, en texto legible."""
+    motivos = []
+    for e in explicacion:
+        if e["aporte"] < APORTE_MINIMO or len(motivos) == 3:
+            continue
+        valor = e["valor"]
+        if e["variable"] == "peso_gr":
+            valor = f"{valor / 1000:.1f} kg"
+        elif isinstance(valor, float) and valor.is_integer():
+            valor = int(valor)  # 25.0 -> 25
+        motivos.append(f"{e['nombre']} {valor} "
+                       f"(+{e['aporte'] * 100:.0f} pts)")
+    return motivos
 
 
 # El nivel se calcula en SQL con el umbral vigente, así al mover el slider
@@ -150,13 +205,13 @@ def reloj(con) -> datetime:
 
 def guardar(con, envios: list, momentos: list):
     """Inserta envíos ya clasificados, con el clima de su hora de llegada."""
-    probs = predecir(envios)
+    probs, explicaciones = predecir(envios)
     filas = []
-    for envio, momento, prob in zip(envios, momentos, probs):
+    for envio, momento, prob, expl in zip(envios, momentos, probs, explicaciones):
         temperatura, lluvia = clima_en(momento)
         filas.append((
             momento.isoformat(), *(envio[c] for c in COLUMNAS_MODELO),
-            prob, ", ".join(motivos_de(envio)), temperatura, lluvia,
+            prob, ", ".join(motivos_de(expl)), temperatura, lluvia,
         ))
     con.executemany(f"""
         INSERT INTO envios_en_curso (
@@ -164,7 +219,7 @@ def guardar(con, envios: list, momentos: list):
             prob_atraso, motivos, temperatura, lluvia_mm
         ) VALUES ({", ".join("?" * (len(COLUMNAS_MODELO) + 5))})
     """, filas)
-    return probs
+    return probs, explicaciones
 
 
 # --- [Paso 4.5] Endpoints -----------------------------------------------------
@@ -198,24 +253,23 @@ def kpis():
 
 @app.post("/predict")
 def predict(envio: Envio):
-    datos = envio.model_dump()
-    prob = predecir([datos])[0]
+    probs, explicaciones = predecir([envio.model_dump()])
     with conectar() as con:
         umbral = leer_umbral(con)
-    return {"prob_atraso": prob, "nivel": nivel_de(prob, umbral),
-            "motivos": motivos_de(datos)}
+    return {"prob_atraso": probs[0], "nivel": nivel_de(probs[0], umbral),
+            "motivos": motivos_de(explicaciones[0]),
+            "base": round(BASE, 3), "explicacion": explicaciones[0]}
 
 
 @app.post("/envios")
 def registrar_envio(envio: Envio):
-    datos = envio.model_dump()
     with conectar() as con:
         momento = reloj(con)
-        prob = guardar(con, [datos], [momento])[0]
+        probs, explicaciones = guardar(con, [envio.model_dump()], [momento])
         umbral = leer_umbral(con)
         nuevo_id = con.execute("SELECT MAX(id) FROM envios_en_curso").fetchone()[0]
-    return {"id": nuevo_id, "recibido_en": momento.isoformat(), "prob_atraso": prob,
-            "nivel": nivel_de(prob, umbral), "motivos": motivos_de(datos)}
+    return {"id": nuevo_id, "recibido_en": momento.isoformat(), "prob_atraso": probs[0],
+            "nivel": nivel_de(probs[0], umbral), "motivos": motivos_de(explicaciones[0])}
 
 
 @app.get("/alertas")
@@ -303,7 +357,7 @@ def simular(horas: float = Query(1, gt=0, le=72)):
         """, (len(momentos),))]
 
         # [Paso 8.3.3] Clasificar todos de una vez y guardar
-        probs = guardar(con, envios, momentos)
+        probs, _ = guardar(con, envios, momentos)
         umbral = leer_umbral(con)
 
     niveles = [nivel_de(p, umbral) for p in probs]
