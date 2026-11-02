@@ -22,6 +22,7 @@ import random
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import joblib
 import numpy as np
@@ -40,6 +41,7 @@ COLUMNAS_MODELO = ["bodega", "modo_envio", "llamadas_cliente", "rating_cliente",
                    "descuento", "peso_gr"]
 BANDA_MEDIO = 0.10  # "medio" = hasta 10 puntos bajo el umbral
 APORTE_MINIMO = 0.02  # un motivo debe subir el riesgo al menos 2 puntos
+ZONA = ZoneInfo("America/Santiago")  # hora de la planta, aunque el servidor esté en UTC
 
 # --- [Paso 4.1] Cargar el modelo y la curva una sola vez al arrancar ----------
 modelo = joblib.load("modelo_atrasos.joblib")
@@ -199,7 +201,7 @@ def reloj(con) -> datetime:
     """Hora actual de la simulación: la real, o la del último envío si /simular
     ya la adelantó."""
     ultimo = con.execute("SELECT MAX(recibido_en) FROM envios_en_curso").fetchone()[0]
-    ahora = datetime.now().replace(microsecond=0)
+    ahora = datetime.now(ZONA).replace(tzinfo=None, microsecond=0)
     return max(ahora, datetime.fromisoformat(ultimo)) if ultimo else ahora
 
 

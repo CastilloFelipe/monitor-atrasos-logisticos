@@ -2,6 +2,9 @@
 
 [![Tests](https://github.com/CastilloFelipe/monitor-atrasos-logisticos/actions/workflows/tests.yml/badge.svg)](https://github.com/CastilloFelipe/monitor-atrasos-logisticos/actions/workflows/tests.yml)
 
+**App en línea:** https://monitor-atrasos-logisticos.onrender.com
+(plan gratuito: si nadie la usó en los últimos 15 min, la primera carga tarda cerca de 1 min)
+
 Mini proyecto: **SQL + API REST + Machine Learning explicable (SHAP) + dashboard JS + API externa**
 para detectar envíos con riesgo de atraso en tiempo real.
 
@@ -58,7 +61,7 @@ las mismas marcas en comentarios, para seguirlo junto al manual.
 | 8.2 | `api.py` + dashboard | Umbral de alerta ajustable |
 | 8.3 | `api.py` + dashboard | Botones para simular un lapso de tiempo |
 | 8.4 | `api.py` + dashboard | Motivos de cada alerta explicados con SHAP |
-| 8.5 | `tests/test_api.py` | 12 tests automáticos de la API (pytest) |
+| 8.5 | `tests/` | 14 tests automáticos de la API y del clima (pytest) |
 | 8.6 | `.github/workflows/tests.yml` | GitHub Actions corre los tests en cada push |
 | 8.7 | `render.yaml` | Despliegue en Render (plan gratuito) |
 
@@ -131,6 +134,13 @@ durante el build y levanta `uvicorn`. Para publicarlo: en Render, *New → Bluep
 y elegir este repositorio. En el plan gratuito el servicio se duerme tras 15 min sin
 visitas (la primera carga tarda cerca de 1 min) y los envíos en curso se pierden en
 cada despliegue.
+
+Dos ajustes que salieron al publicarlo:
+- El servidor de Render usa hora UTC; la API calcula la hora en `America/Santiago`
+  para que el reloj y el clima por hora correspondan a la planta.
+- Render comparte su IP con muchos servicios y Open-Meteo a veces responde 429
+  (demasiadas consultas). `clima.py` recuerda el error 5 minutos, usa los últimos datos
+  buenos si los tiene, y el resto de la app sigue funcionando sin clima.
 
 ## Próximos pasos (para conversar)
 

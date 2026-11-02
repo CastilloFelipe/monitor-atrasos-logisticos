@@ -28,6 +28,7 @@ URL = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode({
     "timezone": "America/Santiago",
 })
 CACHE_SEGUNDOS = 15 * 60
+ESPERA_TRAS_ERROR = 5 * 60  # si la API falla, no reintentar por 5 minutos
 
 # Códigos WMO más comunes -> descripción en español
 DESCRIPCION = {
@@ -38,16 +39,33 @@ DESCRIPCION = {
     95: "Tormenta", 96: "Tormenta con granizo", 99: "Tormenta con granizo",
 }
 
-_cache = {"datos": None, "hora": 0.0}
+_cache = {"datos": None, "hora": 0.0, "error": None, "error_hora": 0.0}
 
 
 def _descargar() -> dict:
-    """[Paso 8.1.1] Llama a la API con caché de 15 minutos."""
-    if _cache["datos"] and time.time() - _cache["hora"] < CACHE_SEGUNDOS:
+    """[Paso 8.1.1] Llama a la API con caché de 15 minutos.
+
+    Si la API falla (por ejemplo, 429 por exceso de consultas), se recuerda el
+    error por 5 minutos para no insistir en cada envío, y mientras tanto se
+    usan los últimos datos buenos si los hay.
+    """
+    ahora = time.time()
+    if _cache["datos"] and ahora - _cache["hora"] < CACHE_SEGUNDOS:
         return _cache["datos"]
-    with urllib.request.urlopen(URL, timeout=5) as resp:
-        datos = json.load(resp)
-    _cache.update(datos=datos, hora=time.time())
+    if _cache["error"] and ahora - _cache["error_hora"] < ESPERA_TRAS_ERROR:
+        if _cache["datos"]:
+            return _cache["datos"]
+        raise RuntimeError(_cache["error"])
+    try:
+        req = urllib.request.Request(URL, headers={"User-Agent": "monitor-atrasos-logisticos"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            datos = json.load(resp)
+    except Exception as e:
+        _cache.update(error=str(e), error_hora=ahora)
+        if _cache["datos"]:
+            return _cache["datos"]
+        raise
+    _cache.update(datos=datos, hora=ahora, error=None)
     return datos
 
 
