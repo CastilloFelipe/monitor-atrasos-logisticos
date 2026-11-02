@@ -61,9 +61,10 @@ las mismas marcas en comentarios, para seguirlo junto al manual.
 | 8.2 | `api.py` + dashboard | Umbral de alerta ajustable |
 | 8.3 | `api.py` + dashboard | Botones para simular un lapso de tiempo |
 | 8.4 | `api.py` + dashboard | Motivos de cada alerta explicados con SHAP |
-| 8.5 | `tests/` | 14 tests automáticos de la API y del clima (pytest) |
+| 8.5 | `tests/` | 19 tests automáticos de la API, el clima y la seguridad (pytest) |
 | 8.6 | `.github/workflows/tests.yml` | GitHub Actions corre los tests en cada push |
 | 8.7 | `render.yaml` | Despliegue en Render (plan gratuito) |
+| 8.8 | `api.py`, dashboard, `.github/` | Seguridad: clave para modificar datos, límites, versiones fijas, Dependabot |
 
 ## Endpoints
 
@@ -76,7 +77,11 @@ las mismas marcas en comentarios, para seguirlo junto al manual.
 | DELETE | `/envios` | Reinicia la demo |
 | GET | `/clima` | Clima actual en Quilicura (Open-Meteo, caché de 15 min) |
 | GET / PUT | `/umbral` | Ver o cambiar el umbral de alerta (0,30 a 0,95) |
-| POST | `/simular?horas=8` | Genera los envíos de N horas (uno cada 2 a 8 min) y adelanta el reloj |
+| POST | `/simular?horas=8` | Genera los envíos de N horas (máx. 24; uno cada 2 a 8 min) y adelanta el reloj |
+| GET | `/modo` | Indica si las rutas que modifican datos piden clave |
+
+Con la variable `CLAVE_ADMIN` definida, `POST /envios`, `DELETE /envios`, `PUT /umbral`
+y `POST /simular` exigen el header `X-Clave-Admin`. Consultar y predecir sigue siendo público.
 
 ## Datos
 
@@ -126,6 +131,20 @@ Los **motivos** de una alerta son las hasta 3 variables que más suben el riesgo
 (al menos 2 puntos), por ejemplo `Peso 2.5 kg (+20 pts) · Descuento 25 (+17 pts)`.
 Antes eran reglas fijas sacadas del análisis SQL; ahora salen del propio modelo.
 El dashboard muestra el aporte de las 9 variables como barras (rojo sube, verde baja).
+
+## Seguridad
+
+| Medida | Detalle |
+|---|---|
+| Clave de administrador | En Render, `CLAVE_ADMIN` la genera Render al azar (*Environment* del servicio). Sin la clave, el dashboard queda en solo lectura: se ven las alertas y se puede predecir, pero no simular, reiniciar ni cambiar el umbral. La clave se escribe en el campo "Clave admin" y solo se guarda mientras la pestaña está abierta. En local, sin la variable, todo queda abierto. |
+| Límites | Máximo 24 h por simulación y 5.000 envíos en curso (los más antiguos se borran) |
+| Inyección SQL | Todas las consultas usan parámetros; el texto SQL solo se arma con nombres de columnas fijos |
+| Validación | Pydantic rechaza datos fuera de rango antes de llegar al modelo o a la base |
+| Chart.js | Se carga con `integrity` (SRI): el navegador lo rechaza si el CDN lo modifica |
+| Dependencias | Versiones exactas en `requirements.txt`; Dependabot propone las actualizaciones |
+| GitHub Actions | Permisos de solo lectura |
+
+Para usar el simulador contra una API con clave: definir `CLAVE_ADMIN` antes de `python simulador.py`.
 
 ## Despliegue en Render
 

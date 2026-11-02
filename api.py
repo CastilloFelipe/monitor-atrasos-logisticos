@@ -11,7 +11,12 @@ Endpoints:
   GET  /umbral    -> umbral actual + curva precisión/recall              [Paso 8.2]
   PUT  /umbral    -> cambia el umbral de alerta                          [Paso 8.2]
   POST /simular   -> simula un lapso de tiempo (N horas de envíos)       [Paso 8.3]
+  GET  /modo      -> indica si las escrituras requieren clave             [Paso 8.8]
   GET  /          -> dashboard (static/index.html)
+
+Seguridad [Paso 8.8]: si existe la variable de entorno CLAVE_ADMIN, las rutas que
+modifican datos (POST /envios, DELETE /envios, PUT /umbral, POST /simular) exigen
+el header `X-Clave-Admin`. Sin la variable (uso local) quedan abiertas.
 
 Ejecutar:  uvicorn api:app --reload
 Docs automáticas: http://127.0.0.1:8000/docs
@@ -19,6 +24,7 @@ Docs automáticas: http://127.0.0.1:8000/docs
 import json
 import os
 import random
+import secrets
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Literal
@@ -28,7 +34,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import shap
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -42,6 +48,18 @@ COLUMNAS_MODELO = ["bodega", "modo_envio", "llamadas_cliente", "rating_cliente",
 BANDA_MEDIO = 0.10  # "medio" = hasta 10 puntos bajo el umbral
 APORTE_MINIMO = 0.02  # un motivo debe subir el riesgo al menos 2 puntos
 ZONA = ZoneInfo("America/Santiago")  # hora de la planta, aunque el servidor esté en UTC
+CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "")  # [Paso 8.8] vacía = sin protección
+MAX_ENVIOS_EN_CURSO = 5000  # [Paso 8.8] tope para que la base no crezca sin límite
+
+
+# --- [Paso 8.8] Protección de las rutas que modifican datos -------------------
+def requiere_clave(x_clave_admin: str = Header("", description="Clave de administrador")):
+    """Rechaza la petición si hay CLAVE_ADMIN configurada y el header no coincide."""
+    if CLAVE_ADMIN and not secrets.compare_digest(x_clave_admin, CLAVE_ADMIN):
+        raise HTTPException(status_code=401, detail="Requiere clave de administrador")
+
+
+ADMIN = [Depends(requiere_clave)]
 
 # --- [Paso 4.1] Cargar el modelo y la curva una sola vez al arrancar ----------
 modelo = joblib.load("modelo_atrasos.joblib")
@@ -221,6 +239,11 @@ def guardar(con, envios: list, momentos: list):
             prob_atraso, motivos, temperatura, lluvia_mm
         ) VALUES ({", ".join("?" * (len(COLUMNAS_MODELO) + 5))})
     """, filas)
+    # [Paso 8.8] Conservar solo los últimos MAX_ENVIOS_EN_CURSO
+    con.execute("""
+        DELETE FROM envios_en_curso
+        WHERE id <= (SELECT MAX(id) FROM envios_en_curso) - ?
+    """, (MAX_ENVIOS_EN_CURSO,))
     return probs, explicaciones
 
 
@@ -263,7 +286,7 @@ def predict(envio: Envio):
             "base": round(BASE, 3), "explicacion": explicaciones[0]}
 
 
-@app.post("/envios")
+@app.post("/envios", dependencies=ADMIN)
 def registrar_envio(envio: Envio):
     with conectar() as con:
         momento = reloj(con)
@@ -303,7 +326,7 @@ def alertas(
     }
 
 
-@app.delete("/envios")
+@app.delete("/envios", dependencies=ADMIN)
 def limpiar_envios():
     """Vacía la tabla de envíos en curso (reinicia la demo y el reloj)."""
     with conectar() as con:
@@ -324,7 +347,7 @@ def ver_umbral():
         return {"umbral": leer_umbral(con), "curva": CURVA}
 
 
-@app.put("/umbral")
+@app.put("/umbral", dependencies=ADMIN)
 def cambiar_umbral(nuevo: NuevoUmbral):
     umbral = round(nuevo.umbral, 2)
     with conectar() as con:
@@ -334,8 +357,8 @@ def cambiar_umbral(nuevo: NuevoUmbral):
 
 
 # --- [Paso 8.3] Simular un lapso de tiempo ------------------------------------
-@app.post("/simular")
-def simular(horas: float = Query(1, gt=0, le=72)):
+@app.post("/simular", dependencies=ADMIN)
+def simular(horas: float = Query(1, gt=0, le=24)):  # máx. 1 día por llamada
     """Genera los envíos que llegarían en las próximas `horas`:
     uno cada 2 a 8 minutos, tomados al azar del histórico."""
     with conectar() as con:
@@ -371,6 +394,12 @@ def simular(horas: float = Query(1, gt=0, le=72)):
         "medio": niveles.count("medio"),
         "bajo": niveles.count("bajo"),
     }
+
+
+@app.get("/modo")
+def modo():
+    """[Paso 8.8] El dashboard lo usa para saber si debe pedir la clave."""
+    return {"requiere_clave": bool(CLAVE_ADMIN)}
 
 
 @app.get("/")

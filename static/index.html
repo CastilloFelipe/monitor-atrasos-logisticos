@@ -4,7 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Monitor de Atrasos</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <!-- [Paso 8.8] integrity: el navegador rechaza el archivo si el CDN lo modifica -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+          integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <style>
     :root {
       --bg: #f4f6f9; --card: #fff; --text: #1d2433; --muted: #6b7385;
@@ -135,6 +138,8 @@
       <button class="sec lapso" data-horas="8">+8 horas</button>
       <button class="sec lapso" data-horas="24">+1 día</button>
       <button class="sec" id="btn-limpiar">Reiniciar</button>
+      <input type="password" id="clave" placeholder="Clave admin" autocomplete="current-password"
+             aria-label="Clave de administrador" style="width:9em" hidden>
     </div>
     <div class="sub" id="lapso-msg"></div>
     <div class="tabla-wrap">
@@ -148,6 +153,29 @@
 
 <script>
 const API = "";  // misma URL que sirve el dashboard
+
+// ---------- [Paso 8.8] Clave para las acciones que modifican datos ----------
+// Se guarda solo mientras la pestaña está abierta (sessionStorage).
+const campoClave = document.getElementById("clave");
+try { campoClave.value = sessionStorage.getItem("clave_admin") || ""; } catch {}
+campoClave.addEventListener("change", () => {
+  try { sessionStorage.setItem("clave_admin", campoClave.value); } catch {}
+});
+fetch(API + "/modo").then(r => r.json()).then(m => { campoClave.hidden = !m.requiere_clave; });
+
+async function fetchAdmin(url, opciones = {}) {
+  const r = await fetch(url, {
+    ...opciones,
+    headers: { ...(opciones.headers || {}), "X-Clave-Admin": campoClave.value },
+  });
+  if (r.status === 401) {
+    document.getElementById("lapso-msg").textContent =
+      "Esta acción requiere la clave de administrador.";
+    campoClave.focus();
+    return null;
+  }
+  return r.json();
+}
 
 // Formato corto de fecha: "20-10 19:45"
 const corta = iso => `${iso.slice(8, 10)}-${iso.slice(5, 7)} ${iso.slice(11, 16)}`;
@@ -269,11 +297,17 @@ async function cargarUmbral() {
 
 slider.addEventListener("input", () => mostrarUmbral(Number(slider.value)));
 slider.addEventListener("change", async () => {
-  await fetch(API + "/umbral", {
+  const r = await fetchAdmin(API + "/umbral", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ umbral: Number(slider.value) }),
   });
+  if (!r) {  // sin clave: volver al umbral guardado en el servidor
+    const actual = await fetch(API + "/umbral").then(r => r.json());
+    slider.value = actual.umbral;
+    mostrarUmbral(actual.umbral);
+    return;
+  }
   cargarAlertas();  // los niveles se recalculan en SQL con el nuevo umbral
 });
 
@@ -312,9 +346,9 @@ async function cargarAlertas() {
 document.querySelectorAll(".lapso").forEach(btn => btn.addEventListener("click", async () => {
   const botones = document.querySelectorAll(".lapso");
   botones.forEach(b => b.disabled = true);
-  const r = await fetch(`${API}/simular?horas=${btn.dataset.horas}`, { method: "POST" })
-    .then(r => r.json());
+  const r = await fetchAdmin(`${API}/simular?horas=${btn.dataset.horas}`, { method: "POST" });
   botones.forEach(b => b.disabled = false);
+  if (!r) return;
   document.getElementById("lapso-msg").textContent =
     `Simuladas ${btn.dataset.horas} h (${corta(r.desde)} → ${corta(r.hasta)}): ` +
     `${r.generados} envíos · ${r.alto} alto · ${r.medio} medio · ${r.bajo} bajo`;
@@ -323,7 +357,7 @@ document.querySelectorAll(".lapso").forEach(btn => btn.addEventListener("click",
 
 document.getElementById("filtro-nivel").addEventListener("change", cargarAlertas);
 document.getElementById("btn-limpiar").addEventListener("click", async () => {
-  await fetch(API + "/envios", { method: "DELETE" });
+  if (!(await fetchAdmin(API + "/envios", { method: "DELETE" }))) return;
   ultimoId = 0;
   document.getElementById("lapso-msg").textContent = "";
   document.getElementById("tabla-alertas").innerHTML =

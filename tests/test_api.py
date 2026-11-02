@@ -24,6 +24,7 @@ ENVIO_RIESGOSO = {
     "importancia": "high", "descuento": 25, "peso_gr": 2500,
 }
 ENVIO_TRANQUILO = {**ENVIO_RIESGOSO, "descuento": 5, "peso_gr": 4500}
+CLAVE = "clave-de-prueba"
 
 
 @pytest.fixture(scope="module")
@@ -32,6 +33,7 @@ def cliente(tmp_path_factory, monkeypatch_module):
     bd = tmp_path_factory.mktemp("bd") / "logistica.db"
     shutil.copy(RAIZ / "logistica.db", bd)
     monkeypatch_module.setenv("LOGISTICA_BD", str(bd))
+    monkeypatch_module.setenv("CLAVE_ADMIN", CLAVE)
     monkeypatch_module.chdir(RAIZ)  # el modelo y static/ se leen con rutas relativas
 
     import api
@@ -40,7 +42,13 @@ def cliente(tmp_path_factory, monkeypatch_module):
     monkeypatch_module.setattr(api, "clima_actual", lambda: {
         "disponible": True, "hora": "2026-11-02T12:00", "temperatura": 15.0,
         "lluvia_mm": 0.0, "viento_kmh": 5.0, "descripcion": "Despejado"})
-    return TestClient(api.app)
+    return TestClient(api.app, headers={"X-Clave-Admin": CLAVE})
+
+
+@pytest.fixture(scope="module")
+def anonimo(cliente):
+    """Visitante sin clave."""
+    return TestClient(cliente.app)
 
 
 @pytest.fixture(scope="module")
@@ -136,3 +144,36 @@ def test_simular_una_hora_adelanta_el_reloj(cliente):
 
 def test_clima_usa_la_api_externa(cliente):
     assert cliente.get("/clima").json()["descripcion"] == "Despejado"
+
+
+# --- [Paso 8.8] Seguridad --------------------------------------------------------
+def test_sin_clave_no_se_puede_modificar_nada(anonimo):
+    assert anonimo.post("/envios", json=ENVIO_RIESGOSO).status_code == 401
+    assert anonimo.delete("/envios").status_code == 401
+    assert anonimo.put("/umbral", json={"umbral": 0.4}).status_code == 401
+    assert anonimo.post("/simular", params={"horas": 1}).status_code == 401
+
+
+def test_clave_incorrecta_responde_401(anonimo):
+    r = anonimo.delete("/envios", headers={"X-Clave-Admin": "otra-clave"})
+    assert r.status_code == 401
+
+
+def test_sin_clave_se_puede_consultar(anonimo):
+    assert anonimo.get("/kpis").status_code == 200
+    assert anonimo.get("/alertas").status_code == 200
+    assert anonimo.get("/umbral").status_code == 200
+    assert anonimo.post("/predict", json=ENVIO_RIESGOSO).status_code == 200
+    assert anonimo.get("/modo").json() == {"requiere_clave": True}
+
+
+def test_simular_mas_de_un_dia_responde_422(cliente):
+    assert cliente.post("/simular", params={"horas": 48}).status_code == 422
+
+
+def test_la_tabla_en_curso_tiene_tope(cliente, monkeypatch):
+    import api
+    monkeypatch.setattr(api, "MAX_ENVIOS_EN_CURSO", 20)
+    cliente.post("/simular", params={"horas": 8})  # ~100 envíos
+    resumen = cliente.get("/alertas").json()["resumen"]
+    assert sum(resumen.values()) <= 20

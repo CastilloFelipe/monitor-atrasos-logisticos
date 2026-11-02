@@ -10,8 +10,10 @@ o POST /simular (Paso 8.3).
 
 Ejecutar (con la API corriendo):  python simulador.py
 Si la API corre en otro puerto:   python simulador.py 8001
+Si la API exige clave (Paso 8.8), definir antes la variable de entorno CLAVE_ADMIN.
 """
 import json
+import os
 import random
 import sqlite3
 import sys
@@ -42,7 +44,8 @@ while True:
     req = urllib.request.Request(
         API,
         data=json.dumps(envio).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json",
+                 "X-Clave-Admin": os.environ.get("CLAVE_ADMIN", "")},
         method="POST",
     )
     with urllib.request.urlopen(req) as resp:

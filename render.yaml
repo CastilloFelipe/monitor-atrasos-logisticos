@@ -12,3 +12,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
+      # [Paso 8.8] Render genera una clave aleatoria; se ve en Environment del servicio
+      - key: CLAVE_ADMIN
+        generateValue: true

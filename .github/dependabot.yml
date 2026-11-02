@@ -1,0 +1,13 @@
+# PASO 8.8: Dependabot revisa cada semana si hay versiones nuevas o
+# vulnerabilidades en las librerías de Python y en las acciones de GitHub,
+# y propone la actualización como pull request (los tests corren solos en ella).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
