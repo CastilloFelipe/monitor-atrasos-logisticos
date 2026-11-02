@@ -6,4 +6,4 @@ joblib==1.6.0
 fastapi==0.162.0
 uvicorn==0.54.0
 shap==0.54.1
-tzdata==2026.3  # zona horaria America/Santiago en Windows
+tzdata==2026.6  # zona horaria America/Santiago en Windows
