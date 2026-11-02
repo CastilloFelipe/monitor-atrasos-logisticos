@@ -133,7 +133,8 @@ El dashboard muestra el aporte de las 9 variables como barras (rojo sube, verde 
 durante el build y levanta `uvicorn`. Para publicarlo: en Render, *New → Blueprint*
 y elegir este repositorio. En el plan gratuito el servicio se duerme tras 15 min sin
 visitas (la primera carga tarda cerca de 1 min) y los envíos en curso se pierden en
-cada despliegue.
+cada despliegue. Con la cuenta de GitHub conectada en Render, cada push a `main`
+se despliega solo (Auto-Deploy "On Commit").
 
 Dos ajustes que salieron al publicarlo:
 - El servidor de Render usa hora UTC; la API calcula la hora en `America/Santiago`
