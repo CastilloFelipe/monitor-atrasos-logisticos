@@ -101,16 +101,39 @@ Hallazgos (`analisis_sql.py`):
 - Variables: bodega, modo, llamadas, rating, costo, compras previas, importancia, descuento, peso.
   Se excluyó `genero` a propósito.
 - Resultado en test (20 %), umbral 0,5: **accuracy 0,68 · ROC AUC 0,75 · precisión 0,93 · recall 0,50**.
+  Con validación cruzada de 5 partes en entrenamiento: ROC AUC 0,736 ± 0,012 (estable).
 - Las variables más importantes son descuento (44 %) y peso (35 %).
+
+### ¿El modelo aporta algo frente a una regla simple?
+
+El análisis SQL mostró dos patrones casi deterministas, así que la comparación obligada es
+contra una regla con esas dos condiciones. Mismo conjunto de prueba, umbral 0,5:
+
+| Método | Accuracy | Precisión | Recall | ROC AUC |
+|---|---:|---:|---:|---:|
+| Regla: descuento > 10 **o** peso entre 2 y 4 kg | 0,660 | 1,000 | 0,431 | 0,716 |
+| Regresión logística | 0,639 | 0,709 | 0,670 | 0,717 |
+| **Random Forest** | **0,679** | 0,928 | 0,501 | **0,748** |
+
+El Random Forest y la regla coinciden en el **93,5 %** de los envíos. El modelo aporta, pero
+poco: unos 7 puntos de recall y 3 de ROC AUC sobre la regla. En la práctica, la mayor parte
+del valor está en descubrir esos dos patrones; el modelo los refina y, sobre todo, entrega una
+probabilidad y una explicación (SHAP) para cada envío, que la regla no da. Este dataset es
+conocido por tener patrones muy marcados, así que no conviene generalizar estas cifras a una
+operación real.
 
 ### Umbral de alerta
 
+La curva que usa el slider del dashboard se calcula con **validación cruzada sobre el
+conjunto de entrenamiento**: elegir el umbral mirando el test sería usar el examen para
+estudiar. El test queda solo para la evaluación final de arriba.
+
 | Umbral | Precisión | Recall | % envíos alertados |
 |---|---|---|---|
-| 0,40 | 0,60 | 0,98 | 97 % |
-| 0,45 | 0,73 | 0,70 | 57 % |
-| 0,50 | 0,93 | 0,50 | 32 % |
-| 0,75 | 1,00 | 0,46 | 27 % |
+| 0,40 | 0,60 | 0,96 | 95 % |
+| 0,45 | 0,70 | 0,71 | 60 % |
+| 0,50 | 0,89 | 0,52 | 35 % |
+| 0,75 | 0,99 | 0,46 | 28 % |
 
 El modelo separa con mucha seguridad ~la mitad de los atrasos (los de descuento alto
 o peso 2-4 kg) y el resto queda cerca de 0,45. Por eso el cambio fuerte ocurre entre
@@ -168,3 +191,9 @@ Dos ajustes que salieron al publicarlo:
 - Conectar fuentes reales (GPS, TMS, WMS) en vez del simulador.
 - Entrenar con el clima guardado en cada envío cuando haya resultados reales.
 - Reentrenar periódicamente y monitorear el *drift* del modelo.
+
+## Licencia
+
+Código bajo licencia [MIT](LICENSE). Autor: Felipe Castillo, estudiante de Ingeniería Civil
+Industrial, Universidad del Desarrollo (Santiago, Chile). Los datos pertenecen a su autor en
+Kaggle (ver [Datos](#datos)) y se incluyen solo con fines de demostración.
