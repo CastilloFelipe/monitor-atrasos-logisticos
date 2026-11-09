@@ -1,6 +1,6 @@
 # Versiones fijas (Paso 8.8): una actualización nueva no entra sin revisarla.
 # Dependabot propone las actualizaciones como pull requests.
-pandas==3.1.0
+pandas==3.1.1
 scikit-learn==1.9.1
 joblib==1.6.0
 fastapi==0.162.0
